@@ -1,0 +1,36 @@
+# docker-compose.yml
+version: "3.8"
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: myregistry.azurecr.io/fastapi-app:latest
+    container_name: fastapi-app
+    ports:
+      - "8000:80"
+    environment:
+      - DATABASE_URL=postgresql://postgres:password@db:5432/users_db
+      - SECRET_KEY=supersecretkey
+      - AZURE_DEVOPS_ORG=your-org
+      - AZURE_DEVOPS_PROJECT=your-project
+      - AZURE_DEVOPS_PAT=your-pat
+      - API_VERSION=7.1-preview.7
+      - ACCESS_TOKEN_EXPIRE_MINUTES=30
+    depends_on:
+      - db
+
+  db:
+    image: postgres:13
+    container_name: postgres-db
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: users_db
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+volumes:
+  postgres_data:
