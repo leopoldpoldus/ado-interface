@@ -16,7 +16,7 @@ services:
       - AZURE_DEVOPS_ORG=your-org
       - AZURE_DEVOPS_PROJECT=your-project
       - AZURE_DEVOPS_PAT=your-pat
-      - API_VERSION=7.1-preview.7
+      - API_VERSION=7.2-preview
       - ACCESS_TOKEN_EXPIRE_MINUTES=30
     depends_on:
       - db
