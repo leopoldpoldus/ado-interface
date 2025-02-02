@@ -1,7 +1,7 @@
 # app/main.py
 import sys
 
-from fastapi import FastAPI, HTTPException, Depends, Body, Header, Path
+from fastapi import FastAPI, HTTPException, Depends, Body, Header, Path, Query
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from datetime import timedelta
@@ -187,6 +187,10 @@ def update_config(
 # ---------------------------
 @app.get("/workitems", summary="List Work Items")
 def list_work_items(
+    state: str = Query(None, description="Filter by work item state (e.g., 'Active', 'Closed')"),
+    title: str = Query(None, description="Keyword to search in the work item title"),
+    limit: int = Query(200, ge=1, description="Maximum number of work items to return"),
+    offset: int = Query(0, ge=0, description="Offset for pagination"),
     x_pat: str = Header(None, alias="X-Azure-DevOps-PAT"),
     current_user = Depends(get_current_active_user),
     db: Session = Depends(get_db)
@@ -197,36 +201,58 @@ def list_work_items(
     project = user_config["azure_devops_project"]
     api_version = user_config["api_version"]
 
-    # WIQL query endpoint is project-scoped:
-    wiql_url = f"https://dev.azure.com/{org}/{project}/_apis/wit/wiql?api-version=7.2-preview.2"
-    query = {
-        "query": (
-            "Select [System.Id], [System.Title], [System.State] "
-            "From WorkItems "
-            "Where [System.TeamProject] = @project "
-            "Order By [System.ChangedDate] Desc"
-        )
-    }
+    # Build the WIQL query dynamically.
+    # Base query:
+    wiql_query = (
+        "SELECT [System.Id], [System.Title], [System.State] "
+        "FROM WorkItems "
+        "WHERE [System.TeamProject] = @project"
+    )
+    # Append filtering conditions if provided.
+    if state:
+        # WIQL expects a literal string value enclosed in single quotes.
+        wiql_query += f" AND [System.State] = '{state}'"
+    if title:
+        # Use the CONTAINS operator for a keyword search.
+        wiql_query += f" AND [System.Title] CONTAINS '{title}'"
+    # Add the ordering clause.
+    wiql_query += " ORDER BY [System.ChangedDate] DESC"
+    # Use TOP clause to limit the number of rows.
+    wiql_query = f"SELECT [System.Id], [System.Title], [System.State] FROM WorkItems WHERE [System.TeamProject] = @project"
+    if state:
+        wiql_query += f" AND [System.State] = '{state}'"
+    if title:
+        wiql_query += f" AND [System.Title] CONTAINS '{title}'"
+    wiql_query += " ORDER BY [System.ChangedDate] DESC"
+
+    # Log the final WIQL query for debugging.
+    logger.info(f"WIQL Query: {wiql_query}")
+
+    # WIQL endpoint URL is project-scoped.
+    wiql_url = f"https://dev.azure.com/{org}/{project}/_apis/wit/wiql?$top={limit}&api-version={api_version}"
+    payload = {"query": wiql_query}
     headers = get_auth_headers(x_pat)
-    response = requests.post(wiql_url, json=query, headers=headers)
-    logger.info(f"Request to Azure DevOps API: {response.request.url}")
+    response = requests.post(wiql_url, json=payload, headers=headers)
+    logger.info(f"Request to WIQL endpoint: {response.request.url}")
 
     if response.status_code != 200:
         logger.error(f"Error retrieving work items: {response.text}")
         raise HTTPException(status_code=response.status_code, detail=response.text)
 
     wiql_result = response.json()
-    work_item_ids = [item["id"] for item in wiql_result.get("workItems", [])][:200]
+    work_item_ids = [item["id"] for item in wiql_result.get("workItems", [])]
+    # Apply offset manually if needed:
+    work_item_ids = work_item_ids[offset:offset+limit]
+
     if work_item_ids:
         ids = ",".join(map(str, work_item_ids))
-        # Include the project in the details endpoint URL
-        details_url = f"https://dev.azure.com/{org}/{project}/_apis/wit/workitems?ids={ids}&api-version=7.2-preview.3"
+        # Use the details endpoint including project in URL.
+        details_url = f"https://dev.azure.com/{org}/{project}/_apis/wit/workitems?ids={ids}&api-version={api_version}"
         details_response = requests.get(details_url, headers=headers)
         if details_response.status_code != 200:
             logger.error(f"Error retrieving work item details: {details_response.status_code}: {details_response.text}")
-            logger.error(f"Details URL: {details_url}")
             raise HTTPException(status_code=details_response.status_code, detail=details_response.text)
-        details = details_response.json()  # assuming it's a JSON object with a "value" key
+        details = details_response.json()  # assuming details contains a "value" key with list of items.
         transformed = [transform_work_item(item) for item in details.get("value", [])]
         return {"workItems": transformed}
 
@@ -293,7 +319,7 @@ def update_work_item(
         payload.append({"op": "add", "path": "/fields/System.Description", "value": item.description})
     if not payload:
         raise HTTPException(status_code=400, detail="No fields provided for update.")
-    url = f"{get_base_url()}/_apis/wit/workitems/{work_item_id}?api-version={API_VERSION}"
+    url = f"{get_base_url(user_config)}/_apis/wit/workitems/{work_item_id}?api-version={API_VERSION}"
     headers = get_auth_headers(x_pat)
     headers["Content-Type"] = "application/json-patch+json"
     response = requests.patch(url, json=payload, headers=headers)
