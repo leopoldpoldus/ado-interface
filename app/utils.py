@@ -1,4 +1,6 @@
 # app/utils.py
+import hashlib
+
 from passlib.context import CryptContext
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -8,6 +10,9 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
 
 def get_password_hash(password: str) -> str:
     return pwd_context.hash(password)
+
+def compute_pat_fingerprint(pat: str) -> str:
+    return hashlib.sha256(pat.encode("utf-8")).hexdigest()
 
 
 def transform_work_item(raw_item: dict) -> dict:

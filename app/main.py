@@ -2,23 +2,16 @@
 import sys
 
 from fastapi import FastAPI, HTTPException, Depends, Body, Header, Path, Query
-from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
-from datetime import timedelta
 import requests
 
-from app.config import ACCESS_TOKEN_EXPIRE_MINUTES, AZURE_DEVOPS_ORG, AZURE_DEVOPS_PROJECT, AZURE_DEVOPS_PAT, \
+from app.config import AZURE_DEVOPS_ORG, AZURE_DEVOPS_PROJECT, AZURE_DEVOPS_PAT, \
     API_VERSION
 from app.database import engine, Base, get_db
 from app.models import UserConfig
-from app.schemas import User, UserCreate, Token, WorkItemCreate, WorkItemUpdate, ConfigUpdate, Config
+from app.schemas import User, UserCreate, WorkItemCreate, WorkItemUpdate, ConfigUpdate, Config
 from app.crud import get_user_by_username, create_user
-from app.auth import (
-    create_access_token,
-    get_current_active_user,
-    oauth2_scheme,
-    verify_password,
-)
+from app.auth import get_api_key
 from app.azure_devops import get_auth_headers, get_base_url
 import logging
 
@@ -75,31 +68,12 @@ def register(user: UserCreate, db: Session = Depends(get_db)):
     return create_user(db, user)
 
 
-@app.post("/token", response_model=Token, summary="User Login / Get Access Token")
-def login_for_access_token(
-        form_data: OAuth2PasswordRequestForm = Depends(),
-        db: Session = Depends(get_db)
-):
-    user = get_user_by_username(db, form_data.username)
-    if not user or not verify_password(form_data.password, user.hashed_password):
-        raise HTTPException(
-            status_code=401,
-            detail="Incorrect username or password",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-    access_token = create_access_token(
-        data={"sub": user.username}, expires_delta=access_token_expires
-    )
-    return {"access_token": access_token, "token_type": "bearer"}
-
-
 # ---------------------------
 # Configuration Endpoints (User-Level)
 # ---------------------------
 @app.get("/config", summary="Get Current Azure DevOps Configuration", response_model=Config)
 def get_config(
-        current_user=Depends(get_current_active_user),
+        current_user=Depends(get_api_key),
         db: Session = Depends(get_db)
 ):
     """
@@ -130,7 +104,7 @@ def get_config(
 @app.put("/config", summary="Update Azure DevOps Configuration", response_model=Config)
 def update_config(
         update: ConfigUpdate = Body(...),
-        current_user=Depends(get_current_active_user),
+        current_user=Depends(get_api_key),
         db: Session = Depends(get_db)
 ):
     """
@@ -192,7 +166,7 @@ def list_work_items(
     limit: int = Query(200, ge=1, description="Maximum number of work items to return"),
     offset: int = Query(0, ge=0, description="Offset for pagination"),
     x_pat: str = Header(None, alias="X-Azure-DevOps-PAT"),
-    current_user = Depends(get_current_active_user),
+    current_user = Depends(get_api_key),
     db: Session = Depends(get_db)
 ):
     # Retrieve the user-level configuration
@@ -262,7 +236,7 @@ def list_work_items(
 def get_work_item(
         work_item_id: int = Path(..., description="The ID of the work item to retrieve"),
         x_pat: str = Header(None, alias="X-Azure-DevOps-PAT"),
-        current_user=Depends(get_current_active_user),
+        current_user=Depends(get_api_key),
         db: Session = Depends(get_db)
 ):
     user_config = get_user_config(current_user, db)
@@ -280,7 +254,7 @@ def get_work_item(
 def create_work_item(
         item: WorkItemCreate = Body(...),
         x_pat: str = Header(None, alias="X-Azure-DevOps-PAT"),
-        current_user=Depends(get_current_active_user),
+        current_user=Depends(get_api_key),
         db: Session = Depends(get_db)
 ):
     user_config = get_user_config(current_user, db)
@@ -306,7 +280,7 @@ def update_work_item(
         work_item_id: int = Path(..., description="The ID of the work item to update"),
         item: WorkItemUpdate = Body(...),
         x_pat: str = Header(None, alias="X-Azure-DevOps-PAT"),
-        current_user=Depends(get_current_active_user),
+        current_user=Depends(get_api_key),
         db: Session = Depends(get_db)
 ):
     user_config = get_user_config(current_user, db)

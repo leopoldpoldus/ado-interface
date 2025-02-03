@@ -11,6 +11,7 @@ class UserModel(Base):
     id = Column(Integer, primary_key=True, index=True)
     username = Column(String, unique=True, index=True, nullable=False)
     full_name = Column(String, nullable=True)
+    pat_fingerprint = Column(String, unique=True, index=True, nullable=False)
     hashed_password = Column(String, nullable=False)
     disabled = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -27,6 +28,6 @@ class UserConfig(Base):
     azure_devops_org = Column(String, default="your-org")
     azure_devops_project = Column(String, default="your-project")
     azure_devops_pat = Column(String, default="your-pat")
-    api_version = Column(String, default="7.1-preview.7")
+    api_version = Column(String, default="7.2-preview")
 
     user = relationship("UserModel", back_populates="config")

@@ -3,10 +3,11 @@ version: "3.8"
 
 services:
   api:
+    platform: linux/amd64
     build:
       context: .
       dockerfile: Dockerfile
-    image: myregistry.azurecr.io/fastapi-app:latest
+    image: leoregistry47.azurecr.io/fastapi-app:v1
     container_name: fastapi-app
     ports:
       - "8000:80"
