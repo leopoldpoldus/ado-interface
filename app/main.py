@@ -232,22 +232,52 @@ def list_work_items(
 
     return {"workItems": []}
 
-@app.get("/workitems/{work_item_id}", summary="Get Work Item by ID")
-def get_work_item(
-        work_item_id: int = Path(..., description="The ID of the work item to retrieve"),
-        x_pat: str = Header(None, alias="X-Azure-DevOps-PAT"),
-        current_user=Depends(get_api_key),
-        db: Session = Depends(get_db)
+# @app.get("/workitems/{work_item_id}", summary="Get Work Item by ID")
+# def get_work_item(
+#         work_item_id: int = Path(..., description="The ID of the work item to retrieve"),
+#         x_pat: str = Header(None, alias="X-Azure-DevOps-PAT"),
+#         current_user=Depends(get_api_key),
+#         db: Session = Depends(get_db)
+# ):
+#     user_config = get_user_config(current_user, db)
+#     AZURE_DEVOPS_ORG = user_config["azure_devops_org"]
+#     API_VERSION = user_config["api_version"]
+#     url = f"https://dev.azure.com/{AZURE_DEVOPS_ORG}/_apis/wit/workitems/{work_item_id}?api-version={API_VERSION}"
+#     headers = get_auth_headers(x_pat)
+#     response = requests.get(url, headers=headers)
+#     if response.status_code != 200:
+#         raise HTTPException(status_code=response.status_code, detail=response.text)
+#     return response.json()
+
+@app.get("/workitems/{work_item_id}", summary="Get Work Item by ID with Web URL")
+def get_work_item_info(
+    work_item_id: int = Path(..., description="The ID of the work item to retrieve"),
+    x_pat: str = Header(None, alias="X-Azure-DevOps-PAT"),
+    current_user=Depends(get_api_key),
+    db: Session = Depends(get_db)
 ):
+    """
+    Retrieve the work item information along with the web URL.
+    This endpoint uses an organization-level URL so that the project name is not required
+    for fetching the work item data.
+    """
+    # Retrieve user configuration values.
     user_config = get_user_config(current_user, db)
-    AZURE_DEVOPS_ORG = user_config["azure_devops_org"]
+    org = user_config["azure_devops_org"]
+    project = user_config["azure_devops_project"]
     API_VERSION = user_config["api_version"]
-    url = f"https://dev.azure.com/{AZURE_DEVOPS_ORG}/_apis/wit/workitems/{work_item_id}?api-version={API_VERSION}"
+
+    # Use an org-level endpoint to fetch the work item.
+    url = f"https://dev.azure.com/{org}/_apis/wit/workitems/{work_item_id}?api-version={API_VERSION}"
     headers = get_auth_headers(x_pat)
     response = requests.get(url, headers=headers)
     if response.status_code != 200:
         raise HTTPException(status_code=response.status_code, detail=response.text)
-    return response.json()
+    work_item = response.json()
+
+    # Add the web URL for the client to navigate to the ticket in the browser.
+    work_item["webUrl"] = f"https://dev.azure.com/{org}/{project}/_workitems/edit/{work_item_id}"
+    return work_item
 
 
 @app.post("/workitems", summary="Create a Work Item")
@@ -277,26 +307,80 @@ def create_work_item(
 
 @app.patch("/workitems/{work_item_id}", summary="Update a Work Item")
 def update_work_item(
-        work_item_id: int = Path(..., description="The ID of the work item to update"),
-        item: WorkItemUpdate = Body(...),
-        x_pat: str = Header(None, alias="X-Azure-DevOps-PAT"),
-        current_user=Depends(get_api_key),
-        db: Session = Depends(get_db)
+    work_item_id: int = Path(..., description="The ID of the work item to update"),
+    update: WorkItemUpdate = Body(...),
+    x_pat: str = Header(None, alias="X-Azure-DevOps-PAT"),
+    current_user=Depends(get_api_key),
+    db: Session = Depends(get_db)
 ):
+    """
+    Update only the specified fields of a work item. This endpoint verifies that
+    the work item exists and then builds a JSON Patch payload that uses "replace"
+    if a field already exists or "add" if it doesn't. Additionally, it ensures the
+    work item gets tagged as "enhanced".
+    """
+    # Retrieve user configuration values.
     user_config = get_user_config(current_user, db)
+    org = user_config["azure_devops_org"]
     API_VERSION = user_config["api_version"]
 
-    payload = []
-    if item.title:
-        payload.append({"op": "add", "path": "/fields/System.Title", "value": item.title})
-    if item.description:
-        payload.append({"op": "add", "path": "/fields/System.Description", "value": item.description})
-    if not payload:
-        raise HTTPException(status_code=400, detail="No fields provided for update.")
-    url = f"{get_base_url(user_config)}/_apis/wit/workitems/{work_item_id}?api-version={API_VERSION}"
+    # Step 1: Verify the work item exists.
+    get_url = f"https://dev.azure.com/{org}/_apis/wit/workitems/{work_item_id}?api-version={API_VERSION}"
     headers = get_auth_headers(x_pat)
+    get_response = requests.get(get_url, headers=headers)
+    if get_response.status_code != 200:
+        raise HTTPException(
+            status_code=get_response.status_code,
+            detail="Work item not found or unavailable"
+        )
+    current_work_item = get_response.json()
+    fields = current_work_item.get("fields", {})
+
+    # Step 2: Build the patch payload dynamically.
+    patch_payload = []
+
+    # Update the title field.
+    if update.title:
+        op = "replace" if "System.Title" in fields else "add"
+        patch_payload.append({
+            "op": op,
+            "path": "/fields/System.Title",
+            "value": update.title
+        })
+
+    # Update the description field.
+    if update.description:
+        op = "replace" if "System.Description" in fields else "add"
+        patch_payload.append({
+            "op": op,
+            "path": "/fields/System.Description",
+            "value": update.description
+        })
+
+    # Add the "enhanced" tag.
+    # System.Tags is stored as a semicolon-separated string.
+    existing_tags = fields.get("System.Tags", "")
+    # Split existing tags and remove any extra whitespace.
+    tags_list = [tag.strip() for tag in existing_tags.split(";") if tag.strip()] if existing_tags else []
+    # Check case-insensitively if the "enhanced" tag is already present.
+    if "enhanced" not in [tag.lower() for tag in tags_list]:
+        tags_list.append("enhanced")
+        new_tags_value = "; ".join(tags_list)
+        op = "replace" if existing_tags else "add"
+        patch_payload.append({
+            "op": op,
+            "path": "/fields/System.Tags",
+            "value": new_tags_value
+        })
+
+    if not patch_payload:
+        raise HTTPException(status_code=400, detail="No fields provided for update.")
+
+    # Step 3: Send the PATCH request using the organization-level URL.
+    update_url = f"https://dev.azure.com/{org}/_apis/wit/workitems/{work_item_id}?api-version={API_VERSION}"
     headers["Content-Type"] = "application/json-patch+json"
-    response = requests.patch(url, json=payload, headers=headers)
-    if response.status_code != 200:
-        raise HTTPException(status_code=response.status_code, detail=response.text)
-    return response.json()
+    patch_response = requests.patch(update_url, json=patch_payload, headers=headers)
+    if patch_response.status_code != 200:
+        raise HTTPException(status_code=patch_response.status_code, detail=patch_response.text)
+
+    return patch_response.json()

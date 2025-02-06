@@ -7,7 +7,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: leoregistry47.azurecr.io/fastapi-app:v1
+    image: leoregistry47.azurecr.io/fastapi-app:v2
     container_name: fastapi-app
     ports:
       - "8000:80"
