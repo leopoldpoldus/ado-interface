@@ -250,35 +250,55 @@ def list_work_items(
 #     return response.json()
 
 @app.get("/workitems/{work_item_id}", summary="Get Work Item by ID with Web URL")
-def get_work_item_info(
-    work_item_id: int = Path(..., description="The ID of the work item to retrieve"),
-    x_pat: str = Header(None, alias="X-Azure-DevOps-PAT"),
-    current_user=Depends(get_api_key),
-    db: Session = Depends(get_db)
-):
+def get_work_item_info(work_item_id: int = Path(..., description="The ID of the work item to retrieve"),
+                       ids: str = Query(None, description="Comma-separated list of work item IDs to retrieve in batch"),
+                       x_pat: str = Header(None, alias="X-Azure-DevOps-PAT"), current_user=Depends(get_api_key),
+                       db: Session = Depends(get_db)):
+    """ Retrieve work item information along with web URLs.
+    This endpoint supports two modes:
+    1. Single work item: Use the path parameter work_item_id
+    2. Multiple work items: Use the query parameter ids (comma-separated)
+
+    The endpoint uses an organization-level URL for fetching work item data.
     """
-    Retrieve the work item information along with the web URL.
-    This endpoint uses an organization-level URL so that the project name is not required
-    for fetching the work item data.
-    """
-    # Retrieve user configuration values.
+
+
+    # Retrieve user configuration values
     user_config = get_user_config(current_user, db)
     org = user_config["azure_devops_org"]
     project = user_config["azure_devops_project"]
-    API_VERSION = user_config["api_version"]
-
-    # Use an org-level endpoint to fetch the work item.
-    url = f"https://dev.azure.com/{org}/_apis/wit/workitems/{work_item_id}?api-version={API_VERSION}"
+    api_version = user_config["api_version"]
     headers = get_auth_headers(x_pat)
-    response = requests.get(url, headers=headers)
-    if response.status_code != 200:
-        raise HTTPException(status_code=response.status_code, detail=response.text)
-    work_item = response.json()
 
-    # Add the web URL for the client to navigate to the ticket in the browser.
-    work_item["webUrl"] = f"https://dev.azure.com/{org}/{project}/_workitems/edit/{work_item_id}"
-    return work_item
+    # Handle multiple work items if ids param is provided
+    if ids:
+        work_item_ids = [id.strip() for id in ids.split(",")]
+        batch_url = f"https://dev.azure.com/{org}/_apis/wit/workitems?ids={','.join(work_item_ids)}&api-version={api_version}"
+        response = requests.get(batch_url, headers=headers)
+        if response.status_code != 200:
+            raise HTTPException(status_code=response.status_code, detail=response.text)
 
+        result = response.json()
+        work_items = result.get("value", [])
+
+        # Add web URLs to each work item
+        for work_item in work_items:
+            item_id = work_item.get("id")
+            work_item["webUrl"] = f"https://dev.azure.com/{org}/{project}/_workitems/edit/{item_id}"
+
+        return {"workItems": work_items}
+
+    # Handle single work item using path parameter
+    else:
+        url = f"https://dev.azure.com/{org}/_apis/wit/workitems/{work_item_id}?api-version={api_version}"
+        response = requests.get(url, headers=headers)
+        if response.status_code != 200:
+            raise HTTPException(status_code=response.status_code, detail=response.text)
+        work_item = response.json()
+
+        # Add the web URL for the client
+        work_item["webUrl"] = f"https://dev.azure.com/{org}/{project}/_workitems/edit/{work_item_id}"
+        return work_item
 
 @app.post("/workitems", summary="Create a Work Item")
 def create_work_item(

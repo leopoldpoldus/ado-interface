@@ -7,12 +7,12 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: leoregistry47.azurecr.io/fastapi-app:v2
+    image: leoregistry47.azurecr.io/fastapi-app:v4
     container_name: fastapi-app
     ports:
       - "8000:80"
     environment:
-      - DATABASE_URL=postgresql://postgres:password@db:5432/users_db
+      - DATABASE_URL=postgresql://postgres:z5DIOIL2hs2s8kTZWn855O@db:5432/users_db
       - SECRET_KEY=supersecretkey
       - AZURE_DEVOPS_ORG=your-org
       - AZURE_DEVOPS_PROJECT=your-project
@@ -28,7 +28,7 @@ services:
     restart: always
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: password
+      POSTGRES_PASSWORD: z5DIOIL2hs2s8kTZWn855O
       POSTGRES_DB: users_db
     volumes:
       - postgres_data:/var/lib/postgresql/data
