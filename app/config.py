@@ -13,7 +13,7 @@ API_VERSION = os.getenv("API_VERSION", "7.1-preview.7")
 
 # Application secrets and database URL
 SECRET_KEY = os.getenv("SECRET_KEY", "supersecretkey")
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres:password@db:5432/users_db")
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres:z5DIOIL2hs2s8kTZWn855O@db:5432/users_db")
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "30"))
 
 # Add ALGORITHM so it can be imported by other modules
